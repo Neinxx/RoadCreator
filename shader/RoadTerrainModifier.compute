@@ -1,0 +1,203 @@
+// Road Creator - Terrain Modifier Compute Shader
+// This shader is responsible for flattening terrain and painting textures based on road data.
+// It is designed to work with the GPUFlattenAndTextureModule.cs script.
+
+#pragma kernel BlendTerrain
+
+// ---------------------------------------------------------------------------------
+// SECTION 1: DATA STRUCTURES & BUFFERS
+// These must exactly match the C# side (structs, buffer names, variable names).
+// ---------------------------------------------------------------------------------
+
+// C# Struct Match: RoadLayerProfileGPU
+struct RoadLayerProfileGPU {
+    float width;
+    float verticalOffset;
+    int terrainLayerIndex;
+    float textureBlendFactor;
+};
+
+// Input Buffers
+StructuredBuffer<float3> SplinePoints;
+StructuredBuffer<RoadLayerProfileGPU> LayerProfiles;
+
+// Input/Output Textures
+// Note: Names must match the strings used in C#'s SetTexture() calls.
+RWTexture2D<float> HeightMapResult;      // Final heightmap (normalized 0-1)
+RWTexture2D<float4> AlphaMapResult;     // Final alphamap (splatmap)
+Texture2D<float> ExistingHeightMap;       // Original terrain heightmap
+Texture2D<float4> ExistingAlphaMap;      // Original terrain alphamap
+
+// ---------------------------------------------------------------------------------
+// SECTION 2: UNIFORM VARIABLES
+// Global parameters passed from the C# script.
+// ---------------------------------------------------------------------------------
+
+int splinePointCount;
+int layerProfileCount;
+float3 terrainPosition;
+float3 terrainSize;
+int heightMapResolution;
+int alphaMapResolution;
+int alphaMapLayerCount;
+float edgeWobbleAmount;
+float edgeWobbleFrequency;
+float flattenStrength;
+float flattenOffset;
+float textureNoiseScale; // Can be used for extra texture detail / noise
+
+
+// ---------------------------------------------------------------------------------
+// SECTION 3: HELPER FUNCTIONS
+// Noise, Spline calculations, etc.
+// ---------------------------------------------------------------------------------
+
+// A simple procedural noise function to replicate wobble.
+// For perfect 1:1 matching with C#'s Mathf.PerlinNoise, it's best to pass a pre-baked
+// Perlin noise texture and sample from it. This procedural version is a close approximation.
+float2 hash(float2 p) {
+    p = float2(dot(p, float2(127.1, 311.7)), dot(p, float2(269.5, 183.3)));
+    return - 1.0 + 2.0 * frac(sin(p) * 43758.5453123);
+}
+
+float noise(float2 p) {
+    float2 i = floor(p); float2 f = frac(p); f = f * f * (3.0 - 2.0 * f);
+    float a = dot(hash(i + float2(0.0, 0.0)), f - float2(0.0, 0.0));
+    float b = dot(hash(i + float2(1.0, 0.0)), f - float2(1.0, 0.0));
+    float c = dot(hash(i + float2(0.0, 1.0)), f - float2(0.0, 1.0));
+    float d = dot(hash(i + float2(1.0, 1.0)), f - float2(1.0, 1.0));
+    return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+}
+
+// WYSIWYG Wobble Function - Must mirror the C# RoadNoiseUtility logic.
+float GetEdgeWobble(float3 worldPos) {
+    if (edgeWobbleAmount <= 0.0 || edgeWobbleFrequency <= 0.0) {
+        return 0.0;
+    }
+    return noise(worldPos.xz * edgeWobbleFrequency) * edgeWobbleAmount;
+}
+
+// Catmull-Rom spline point calculation.
+float3 GetPointOnSpline(float t)
+{
+    t = saturate(t);
+    float totalSegments = splinePointCount - 1;
+    float scaledT = t * totalSegments;
+    int segmentIndex = floor(scaledT);
+    segmentIndex = clamp(segmentIndex, 0, (int)totalSegments - 1);
+    float segmentT = scaledT - segmentIndex;
+
+    float3 p0 = (segmentIndex == 0) ? SplinePoints[segmentIndex] : SplinePoints[segmentIndex - 1];
+    float3 p1 = SplinePoints[segmentIndex];
+    float3 p2 = SplinePoints[segmentIndex + 1];
+    float3 p3 = (segmentIndex + 2 > splinePointCount - 1) ? SplinePoints[segmentIndex + 1] : SplinePoints[segmentIndex + 2];
+
+    float3 a = 2.0f * p1;
+    float3 b = p2 - p0;
+    float3 c = 2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3;
+    float3 d = - p0 + 3.0f * p1 - 3.0f * p2 + p3;
+    return 0.5f * (a + (b * segmentT) + (c * segmentT * segmentT) + (d * segmentT * segmentT * segmentT));
+}
+
+// ---------------------------------------------------------------------------------
+// SECTION 4: MAIN KERNEL
+// Executed for every pixel in parallel on the GPU.
+// ---------------------------------------------------------------------------------
+
+[numthreads(8, 8, 1)]
+void BlendTerrain(uint3 id : SV_DispatchThreadID)
+{
+    // --- 1. Calculate current pixel's world position ---
+    float2 uv = id.xy / float2(heightMapResolution - 1.0, heightMapResolution - 1.0);
+    float3 worldPos = terrainPosition + float3(uv.x * terrainSize.x, 0, uv.y * terrainSize.z);
+
+    // --- 2. Find the closest point on the spline ---
+    float minSqrDist = 1.0e9;
+    float3 closestPointOnSpline = (float3)0;
+    const int searchSteps = 200;
+    for (int i = 0; i < searchSteps; i ++) // This loop uses "i"
+    {
+        float t = (float)i / (float)(searchSteps - 1);
+        float3 p = GetPointOnSpline(t);
+        float sqrDist = distance(worldPos.xz, p.xz);
+        if (sqrDist < minSqrDist)
+        {
+            minSqrDist = sqrDist;
+            closestPointOnSpline = p;
+        }
+    }
+    float distFromCenter = sqrt(minSqrDist);
+
+    // --- 3. Find which road layer this pixel belongs to ---
+    float currentOffsetFromCenter = 0;
+    int targetLayerDataIndex = - 1;
+
+    // [FIX #2] Changed loop variable from "i" to "j" to avoid conflict.
+    for (int j = 0; j < layerProfileCount; j ++)
+    {
+        RoadLayerProfileGPU profile = LayerProfiles[j];
+        float layerOuterEdge = currentOffsetFromCenter + profile.width;
+
+        if (j == layerProfileCount - 1)
+        {
+            layerOuterEdge += GetEdgeWobble(worldPos);
+        }
+
+        if (distFromCenter <= layerOuterEdge)
+        {
+            targetLayerDataIndex = j;
+            break;
+        }
+        currentOffsetFromCenter = layerOuterEdge;
+    }
+
+    // --- 4. Apply modifications if the pixel is within the road area ---
+    uint2 alpha_id = (uint2)round(uv * float2(alphaMapResolution - 1, alphaMapResolution - 1));
+
+    if (targetLayerDataIndex == - 1)
+    {
+        HeightMapResult[id.xy] = ExistingHeightMap.Load(int3(id.xy, 0)).r;
+        AlphaMapResult[alpha_id] = ExistingAlphaMap.Load(int3(alpha_id, 0));
+    }
+    else
+    {
+        RoadLayerProfileGPU finalProfile = LayerProfiles[targetLayerDataIndex];
+
+        // A. Calculate new height
+        float targetHeight = closestPointOnSpline.y + finalProfile.verticalOffset - flattenOffset;
+        float originalHeight = ExistingHeightMap.Load(int3(id.xy, 0)).r * terrainSize.y;
+        float newHeight = lerp(originalHeight, targetHeight, flattenStrength);
+        HeightMapResult[id.xy] = newHeight / terrainSize.y;
+
+        // B. Calculate new alphamap weights
+        float4 finalAlphamapWeights = (float4)0;
+
+        if (finalProfile.terrainLayerIndex >= 0 && finalProfile.terrainLayerIndex < 4) // Assuming max 4 layers for one splatmap
+        {
+            // [FIX #1] Correct way to assign to a vector component in HLSL.
+            // Create a temporary local variable, modify it, then assign it.
+            float4 weights = (float4)0;
+            if (finalProfile.terrainLayerIndex == 0) weights.r = 1.0;
+            else if (finalProfile.terrainLayerIndex == 1) weights.g = 1.0;
+            else if (finalProfile.terrainLayerIndex == 2) weights.b = 1.0;
+            else if (finalProfile.terrainLayerIndex == 3) weights.a = 1.0;
+
+            // Blend with existing weights based on the blend factor
+            float4 existingWeights = ExistingAlphaMap.Load(int3(alpha_id, 0));
+            finalAlphamapWeights = lerp(existingWeights, weights, finalProfile.textureBlendFactor);
+        }
+        else
+        {
+            finalAlphamapWeights = ExistingAlphaMap.Load(int3(alpha_id, 0));
+        }
+
+        // Normalize the weights
+        float totalWeight = dot(finalAlphamapWeights, (float4)1);
+        if (totalWeight > 0.001)
+        {
+            finalAlphamapWeights /= totalWeight;
+        }
+
+        AlphaMapResult[alpha_id] = finalAlphamapWeights;
+    }
+}

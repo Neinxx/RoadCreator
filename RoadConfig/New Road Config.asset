@@ -1,0 +1,48 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 720a85e8fcd7ace41990bf3bbc0df34f, type: 3}
+  m_Name: New Road Config
+  m_EditorClassIdentifier: 
+  layerProfiles:
+  - layerName: "\u8DEF\u9762"
+    width: 3.49
+    meshMaterial: {fileID: 2100000, guid: dd46d6b082b4e634587ac1ed6cd74461, type: 2}
+    verticalOffset: 0
+    terrainLayer: {fileID: 8574412962073106934, guid: b1760f515e2d0504ea2a1719af57d0af,
+      type: 2}
+    textureBlendFactor: 1
+    boundaryWobbleFrequency: 0.5
+    boundaryWobbleAmplitude: 0.2
+  - layerName: "\u8DEF\u9762"
+    width: 1.57
+    meshMaterial: {fileID: 2100000, guid: 93306ae3491cd344e943f1c912eacacf, type: 2}
+    verticalOffset: 0
+    terrainLayer: {fileID: 8574412962073106934, guid: 766539b9abbac894da3f714c92fe60e7,
+      type: 2}
+    textureBlendFactor: 1
+    boundaryWobbleFrequency: 0.5
+    boundaryWobbleAmplitude: 0.2
+  - layerName: "\u8DEF\u9762"
+    width: 3.26
+    meshMaterial: {fileID: 2100000, guid: db2b8331f07522345936c184304af408, type: 2}
+    verticalOffset: 0
+    terrainLayer: {fileID: 8574412962073106934, guid: 95f24313b99530b4bb839c020acbb5a9,
+      type: 2}
+    textureBlendFactor: 1
+    boundaryWobbleFrequency: 0.5
+    boundaryWobbleAmplitude: 0.2
+  splineResolution: 16
+  edgeWobbleAmount: 8.1
+  edgeWobbleFrequency: 0.83
+  previewHeightOffset: 0.1
+  conformToTerrainUndulations: 0
+  terrainConformity: 0
