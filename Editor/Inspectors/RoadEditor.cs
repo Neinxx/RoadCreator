@@ -1,4 +1,4 @@
-// 文件路径: Assets/RoadCreator/Editor/Inspectors/RoadEditor.cs
+
 using UnityEngine;
 using UnityEditor;
 
@@ -10,30 +10,23 @@ namespace RoadSystem.Editor
         private SerializedObject serializedManager;
         private RoadManager roadManager;
 
-        // OnEnable 在选中对象时被调用
         private void OnEnable()
         {
             roadManager = (RoadManager)target;
             serializedManager = new SerializedObject(roadManager);
-
-            
             roadManager.OnRoadDataChanged += roadManager.RegenerateRoad;
         }
 
-        
         private void OnDisable()
         {
-            
             if (roadManager != null)
             {
                 roadManager.OnRoadDataChanged -= roadManager.RegenerateRoad;
             }
         }
 
-        
         public override void OnInspectorGUI()
         {
-            // 每次绘制前更新序列化对象，以反映最新的数据
             serializedManager.Update();
 
             var boldCenteredLabel = new GUIStyle(EditorStyles.boldLabel) { alignment = TextAnchor.MiddleCenter };
@@ -41,7 +34,6 @@ namespace RoadSystem.Editor
             EditorGUILayout.HelpBox("要编辑道路路径，请从 Unity 主工具栏中选择“道路编辑工具”。", MessageType.Info);
             EditorGUILayout.Space();
 
-            // --- 核心配置 ---
             EditorGUILayout.BeginVertical("box");
             EditorGUILayout.LabelField("核心配置 (Core Configs)", boldCenteredLabel);
             EditorGUILayout.PropertyField(serializedManager.FindProperty("roadConfig"), new GUIContent("道路配置", "定义道路的剖面、材质和风格。"));
@@ -50,7 +42,6 @@ namespace RoadSystem.Editor
 
             EditorGUILayout.Space(10);
 
-            // --- 数据管理 ---
             EditorGUILayout.BeginVertical("box");
             EditorGUILayout.LabelField("路径数据管理", boldCenteredLabel);
             DrawDataManagementButtons();
@@ -58,27 +49,51 @@ namespace RoadSystem.Editor
 
             EditorGUILayout.Space(10);
 
-            // --- 可视化与操作 ---
             EditorGUILayout.BeginVertical("box");
             EditorGUILayout.LabelField("预览与应用", boldCenteredLabel);
             DrawVisibilityToggle();
 
             EditorGUILayout.Space(5);
 
-            GUI.backgroundColor = new Color(0.7f, 1f, 0.7f);
-            DrawApplyTerrainButton();
-            GUI.backgroundColor = Color.white;
+            // 使用我之前建议的 Scope 写法，更安全
+            using (new GUIBackgroundColorScope(new Color(0.7f, 1f, 0.7f)))
+            {
+                DrawApplyTerrainButton();
+            }
 
             EditorGUILayout.EndVertical();
 
-            // 应用所有通过 PropertyField 修改的属性
             if (serializedManager.ApplyModifiedProperties())
             {
-                // 如果属性真的发生了变化，则重新生成道路预览
-                
                 roadManager.RegenerateRoad();
             }
         }
+
+        // [修正] 应用地形修改的按钮逻辑
+        private void DrawApplyTerrainButton()
+        {
+            if (GUILayout.Button(new GUIContent("应用地形修改 (Apply & Hide Mesh)", "将道路形状应用到地形上，并隐藏预览网格。"), GUILayout.Height(35)))
+            {
+                if (!roadManager.IsReadyForTerrainModification)
+                {
+                    Debug.LogWarning("无法应用地形修改：请确保 Road Manager 已正确配置...");
+                    return;
+                }
+
+             
+                // 总指挥 TerrainModifier。
+                var modifier = new TerrainModifier();
+                modifier.Execute(roadManager);
+
+                if (roadManager.MeshRenderer != null)
+                {
+                    Undo.RecordObject(roadManager.MeshRenderer, "Hide Road Mesh After Apply");
+                    roadManager.MeshRenderer.enabled = false;
+                }
+            }
+        }
+        
+        
 
         private void DrawDataManagementButtons()
         {
@@ -90,7 +105,7 @@ namespace RoadSystem.Editor
                     if (!string.IsNullOrEmpty(path))
                     {
                         Undo.RecordObject(roadManager, "Import Road Path");
-                        roadManager.ImportPath(path); // ImportPath现在会触发事件，自动重新生成道路
+                        roadManager.ImportPath(path);
                         EditorUtility.SetDirty(roadManager);
                     }
                 }
@@ -115,28 +130,23 @@ namespace RoadSystem.Editor
                 roadManager.MeshRenderer.enabled = !roadManager.MeshRenderer.enabled;
             }
         }
+    }
 
-        private void DrawApplyTerrainButton()
+    /// <summary>
+    /// 一个辅助类，用于安全地临时改变GUI背景色。
+    /// </summary>
+    public class GUIBackgroundColorScope : GUI.Scope
+    {
+        private readonly Color previousColor;
+        public GUIBackgroundColorScope(Color color)
         {
-            if (GUILayout.Button(new GUIContent("应用地形修改 (Apply & Hide Mesh)", "..."), GUILayout.Height(35)))
-            {
-                if (!roadManager.IsReadyForTerrainModification)
-                {
-                    Debug.LogWarning("无法应用地形修改：请确保 Road Manager 已正确配置...");
-                    return;
-                }
-                
-                TerrainNeighborManager.UpdateAllTerrainNeighbors();
-                
-                var processor = new MultiTerrainProcessor();
-                processor.Execute(roadManager);
+            previousColor = GUI.backgroundColor;
+            GUI.backgroundColor = color;
+        }
 
-                if (roadManager.MeshRenderer != null)
-                {
-                    Undo.RecordObject(roadManager.MeshRenderer, "Hide Road Mesh After Apply");
-                    roadManager.MeshRenderer.enabled = false;
-                }
-            }
+        protected override void CloseScope()
+        {
+            GUI.backgroundColor = previousColor;
         }
     }
 }
