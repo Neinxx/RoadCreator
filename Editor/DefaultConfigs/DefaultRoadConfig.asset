@@ -1,0 +1,73 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 720a85e8fcd7ace41990bf3bbc0df34f, type: 3}
+  m_Name: DefaultRoadConfig
+  m_EditorClassIdentifier: 
+  uvGenerationMode: 0
+  worldUVScaling: {x: 1, y: 1}
+  layerProfiles:
+  - layerName: flower
+    width: 1.66
+    meshMaterial: {fileID: 2100000, guid: 93306ae3491cd344e943f1c912eacacf, type: 2}
+    verticalOffset: 0.09
+    terrainLayer: {fileID: 8574412962073106934, guid: 69debc15b685aef4aa7bb2783ddd8a2a,
+      type: 2}
+    textureBlendFactor: 0
+    boundaryWobbleFrequency: 2.4
+    boundaryWobbleAmplitude: 1.08
+    isExpanded: 1
+    offsetFromCenter: -0.47
+  - layerName: 4
+    width: 0.76
+    meshMaterial: {fileID: 2100000, guid: 48ff459c65d12264c80a0ca6441d8ddb, type: 2}
+    verticalOffset: 0.07
+    terrainLayer: {fileID: 8574412962073106934, guid: 8ebab97ea0aadcd45a9e02f16b5c2dc8,
+      type: 2}
+    textureBlendFactor: 0
+    boundaryWobbleFrequency: 8.3
+    boundaryWobbleAmplitude: 0.48
+    isExpanded: 1
+    offsetFromCenter: 0.13
+  - layerName: 1
+    width: 1.75
+    meshMaterial: {fileID: 2100000, guid: dd46d6b082b4e634587ac1ed6cd74461, type: 2}
+    verticalOffset: 0
+    terrainLayer: {fileID: 8574412962073106934, guid: 93b47c02586f3a741aecf158db6d0c49,
+      type: 2}
+    textureBlendFactor: 0
+    boundaryWobbleFrequency: 6.9
+    boundaryWobbleAmplitude: 0.46
+    isExpanded: 1
+    offsetFromCenter: 0.03
+  - layerName: 3
+    width: 1.3
+    meshMaterial: {fileID: 2100000, guid: db2b8331f07522345936c184304af408, type: 2}
+    verticalOffset: 0.01
+    terrainLayer: {fileID: 8574412962073106934, guid: 8ebab97ea0aadcd45a9e02f16b5c2dc8,
+      type: 2}
+    textureBlendFactor: 0
+    boundaryWobbleFrequency: 4.3
+    boundaryWobbleAmplitude: 0.48
+    isExpanded: 1
+    offsetFromCenter: 0
+  splineResolution: 38
+  edgeWobbleAmount: 0.5
+  edgeWobbleFrequency: 0.1
+  previewHeightOffset: 0.1
+  conformToTerrainUndulations: 0
+  terrainConformity: 1
+  globalWidthMultiplier: 2.25
+  globalWobbleFrequencyMultiplier: 2.1
+  globalWobbleAmplitudeMultiplier: 0.7
+  controlLayersIndependently: 1
+  verticalSmoothness: 0.57
+  smoothIterations: 7

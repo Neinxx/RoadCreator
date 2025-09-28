@@ -13,6 +13,6 @@ MonoBehaviour:
   m_Name: New Terrain Config
   m_EditorClassIdentifier: 
   flattenFeatherWidth: 9.01
-  flattenOffset: 50
+  flattenOffset: 0
   flattenStrength: 1
   textureNoiseScale: 0.699

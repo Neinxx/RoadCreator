@@ -1,0 +1,130 @@
+/* 窗口根元素和 TwoPaneSplitView */
+#main-split-view {
+    flex-grow: 1;
+}
+
+/* 上下分区面板的通用样式 */
+.section-panel {
+    flex-grow: 1;
+    padding: 5px; /* 稍微减少内边距 */
+}
+
+/* 空状态面板样式 */
+.empty-state {
+    flex-grow: 1;
+    justify-content: center;
+    align-items: center;
+    min-height: 200px; /* 减少最小高度，使其在顶部面板中更合理 */
+    padding: 20px;
+}
+
+.empty-state Label {
+    -unity-font-style: italic;
+    color: var(--unity-colors-text-placeholder); /* 使用Unity内置的占位符文本颜色 */
+}
+
+.create-button {
+    margin-top: 15px;
+    padding: 6px 12px;
+    background-color: var(--unity-colors-accent); /* 使用Unity的主题强调色 */
+    color: var(--unity-colors-text);
+    border-width: 1px;
+    border-radius: 3px;
+    border-color: var(--unity-colors-border);
+}
+
+.create-button:hover {
+    background-color: var(--unity-colors-accent-hover);
+}
+
+/* 编辑器内容滚动视图 */
+.editor-content-scrollview {
+    flex-grow: 1;
+}
+
+/* 编辑器内容区域 */
+#editor-content {
+    /* 内部 PropertyField 会自动排列 */
+}
+
+/* 头部标签样式 */
+.header-label {
+    font-size: 14px; /* 略小一点 */
+    -unity-font-style: bold;
+    -unity-text-align: middle-left;
+    margin-bottom: 5px;
+    color: var(--unity-colors-text);
+}
+
+.list-header-container {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 5px;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--unity-colors-border); /* Unity原生边框色 */
+    margin-bottom: 5px;
+}
+
+/* 刷新按钮样式 */
+.small-button {
+    font-size: 11px;
+    padding: 2px 5px;
+    min-width: unset; /* 允许按钮根据内容缩小 */
+}
+
+
+/* 道路列表视图 */
+.road-list-view {
+    flex-grow: 1;
+}
+
+/* 列表项样式 */
+.road-list-item {
+    flex-direction: row;
+    align-items: center;
+    padding: 3px; /* 稍微减少内边距 */
+    height: 22px; /* 减少高度，更紧凑 */
+}
+
+.road-list-item #icon {
+    width: 16px;
+    height: 16px;
+    margin-right: 5px;
+    -unity-slice-left: 0; /* 确保图标完整显示 */
+    -unity-slice-right: 0;
+    -unity-slice-top: 0;
+    -unity-slice-bottom: 0;
+}
+
+.road-list-item #label {
+    flex-grow: 1;
+    font-size: 12px; /* 列表项文字更小 */
+    color: var(--unity-colors-text); /* 使用 Unity 内置文本颜色 */
+}
+
+/* 列表项选中时的样式 */
+.unity-list-view__item--selected .road-list-item {
+    background-color: var(--unity-colors-selection-background); /* 使用 Unity 选择背景色 */
+    color: var(--unity-colors-selection-text);
+}
+
+.unity-property-field {
+    margin-bottom: 2px; /* 减小属性字段之间的间距 */
+}
+
+.unity-property-field .unity-label {
+    min-width: 100px; /* 调整标签最小宽度 */
+    -unity-font-style: normal;
+}
+
+.unity-property-field .unity-base-field__input {
+    flex-grow: 1;
+}
+
+/* ReorderableList 容器的样式 */
+.imgui-reorderable-list-container {
+    margin-top: 10px;
+    margin-bottom: 5px;
+    /* IMGUIContainer 自身不能直接使用USS的padding/margin，通过其父级VisualElement来控制 */
+}

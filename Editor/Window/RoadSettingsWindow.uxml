@@ -1,0 +1,23 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements">
+    <uie:TwoPaneSplitView direction="vertical" fixedPaneInitialDimension="350" name="main-split-view">
+        <ui:VisualElement name="top-panel" class="section-panel">
+            <ui:VisualElement name="empty-state-panel" class="empty-state">
+                <ui:Label text="请从下方列表中选择一条道路进行编辑。" style="-unity-text-align: middle-center;"/>
+                <ui:Label text="或" style="-unity-text-align: middle-center; margin-top: 10px; margin-bottom: 10px;"/>
+                <ui:Button name="create-road-button" text="创建新道路" class="create-button"/>
+            </ui:VisualElement>
+
+            <ui:ScrollView name="editor-content-scrollview" class="editor-content-scrollview">
+                <ui:VisualElement name="editor-content" />
+            </ui:ScrollView>
+        </ui:VisualElement>
+
+        <ui:VisualElement name="bottom-panel" class="section-panel">
+            <ui:VisualElement class="list-header-container">
+                <ui:Label text="场景中的所有道路" class="header-label" />
+                <ui:Button name="refresh-list-button" text="刷新列表" class="small-button"/>
+            </ui:VisualElement>
+            <ui:ListView name="road-list" class="road-list-view" />
+        </ui:VisualElement>
+    </uie:TwoPaneSplitView>
+</ui:UXML>
