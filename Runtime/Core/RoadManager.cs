@@ -2,6 +2,7 @@ using UnityEngine;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System;
 
 namespace RoadSystem
 {
@@ -9,6 +10,12 @@ namespace RoadSystem
     [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
     public class RoadManager : MonoBehaviour
     {
+
+
+        //Event
+        public event Action OnRoadDataChanged;
+
+
         [SerializeField] private RoadConfig roadConfig;
         [SerializeField] private TerrainConfig terrainConfig;
         // [坐标系修复] controlPoints 现在存储的是本地坐标
@@ -42,7 +49,6 @@ namespace RoadSystem
                 return;
             }
 
-            // RoadMeshGenerator 现在会处理本地坐标的转换
             var newMesh = RoadMeshGenerator.GenerateMesh(controlPoints, roadConfig, transform);
             MeshFilter.sharedMesh = newMesh;
 
@@ -92,7 +98,8 @@ namespace RoadSystem
             string json = File.ReadAllText(path);
             RoadData data = JsonUtility.FromJson<RoadData>(json);
             this.controlPoints = data.controlPoints;
-            RegenerateRoad();
+
+            OnRoadDataChanged?.Invoke();
         }
 
         private void Reset()
@@ -104,7 +111,7 @@ namespace RoadSystem
                 new() { position = new Vector3(0, 0, 10) } // 10 units forward in local space
             };
 #if UNITY_EDITOR
-            UnityEditor.EditorApplication.delayCall += RegenerateRoad;
+            UnityEditor.EditorApplication.delayCall += () => OnRoadDataChanged?.Invoke();
 #endif
         }
     }

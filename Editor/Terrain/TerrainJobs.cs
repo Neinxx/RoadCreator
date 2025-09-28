@@ -56,7 +56,7 @@ namespace RoadSystem
                 int i2 = triangles[triIdx * 3 + 2];
 
                 // 检查顶点索引是否有效
-                if (i0 >= vertices.Length || i1 >= vertices.Length || i2 >= vertices.Length) 
+                if (i0 >= vertices.Length || i1 >= vertices.Length || i2 >= vertices.Length)
                     return;
 
                 // 将顶点从模型空间转换到世界空间
@@ -72,23 +72,23 @@ namespace RoadSystem
 
                 // 将世界空间的包围盒转换为地形高度图的像素坐标范围
                 int startX = (int)(((minX - terrainPosition.x) / terrainSize.x) * heightmapResolution);
-                int endX   = (int)(((maxX - terrainPosition.x) / terrainSize.x) * heightmapResolution) + 1;
+                int endX = (int)(((maxX - terrainPosition.x) / terrainSize.x) * heightmapResolution) + 1;
                 int startY = (int)(((minZ - terrainPosition.z) / terrainSize.z) * heightmapResolution);
-                int endY   = (int)(((maxZ - terrainPosition.z) / terrainSize.z) * heightmapResolution) + 1;
+                int endY = (int)(((maxZ - terrainPosition.z) / terrainSize.z) * heightmapResolution) + 1;
 
                 // 将范围限制在地形的有效边界内
                 startX = math.max(0, startX);
-                endX   = math.min(heightmapResolution, endX);
+                endX = math.min(heightmapResolution, endX);
                 startY = math.max(0, startY);
-                endY   = math.min(heightmapResolution, endY);
+                endY = math.min(heightmapResolution, endY);
 
                 // 如果包围盒无效，跳过
                 if (startX >= endX || startY >= endY) return;
-                
+
                 float2 p0 = v0.xz;
                 float2 p1 = v1.xz;
                 float2 p2 = v2.xz;
-                
+
                 // 遍历这个小范围内的所有地形像素
                 for (int y = startY; y < endY; y++)
                 {
@@ -109,7 +109,7 @@ namespace RoadSystem
                             // 计算高度
                             float roadHeight = bary.x * v0.y + bary.y * v1.y + bary.z * v2.y;
                             roadHeight -= flattenOffset;
-                            
+
                             int heightmapIndex = y * heightmapResolution + x;
                             if (heightmapIndex >= 0 && heightmapIndex < heightMap.Length)
                             {
@@ -118,41 +118,69 @@ namespace RoadSystem
                                 heightMap[heightmapIndex] = newHeight / terrainSize.y;
                             }
 
-                            // ✅ 使用正确的坐标转换方法
-                            int alphaX = (int)((float)x / heightmapResolutionMinusOne * alphamapResolutionMinusOne);
-                            int alphaY = (int)((float)y / heightmapResolutionMinusOne * alphamapResolutionMinusOne);
-                            
-                            // 确保纹理坐标在有效范围内
-                            if (alphaX < 0 || alphaX >= alphamapWidth || alphaY < 0 || alphaY >= alphamapHeight) continue;
-                            
+                            // ✅ 使用双线性插值计算纹理坐标
+                            float alphaNormX = (float)x / heightmapResolutionMinusOne;
+                            float alphaNormY = (float)y / heightmapResolutionMinusOne;
+
+                            // 映射到 alphamap 分辨率
+                            float alphaXFloat = alphaNormX * alphamapResolutionMinusOne;
+                            float alphaYFloat = alphaNormY * alphamapResolutionMinusOne;
+
+                            // 双线性插值的四个角点
+                            int alphaX0 = (int)math.floor(alphaXFloat);
+                            int alphaX1 = (int)math.ceil(alphaXFloat);
+                            int alphaY0 = (int)math.floor(alphaYFloat);
+                            int alphaY1 = (int)math.ceil(alphaYFloat);
+
+                            // 确保在范围内
+                            alphaX0 = math.clamp(alphaX0, 0, alphamapWidth - 2);
+                            alphaX1 = math.clamp(alphaX1, 1, alphamapWidth - 1);
+                            alphaY0 = math.clamp(alphaY0, 0, alphamapHeight - 2);
+                            alphaY1 = math.clamp(alphaY1, 1, alphamapHeight - 1);
+
+                            // 插值权重
+                            float dx = alphaXFloat - alphaX0;
+                            float dy = alphaYFloat - alphaY0;
+
+                            // 对每个图层进行双线性插值
                             int2 layerInfo = vertexLayerInfos[i0];
                             int subMeshIndex = layerInfo.x;
                             float blendStrength = layerInfo.y / 1000f;
-                            
+
                             if (subMeshIndex >= 0 && subMeshIndex < layerMapping.Length)
                             {
                                 int terrainLayerIndex = layerMapping[subMeshIndex];
                                 if (terrainLayerIndex != -1 && terrainLayerIndex < alphamapLayers)
                                 {
-                                    PaintAlphamap(alphaY * alphamapWidth + alphaX, terrainLayerIndex, blendStrength);
+                                    // 双线性插值混合强度
+                                    float weight00 = (1 - dx) * (1 - dy);
+                                    float weight01 = (1 - dx) * dy;
+                                    float weight10 = dx * (1 - dy);
+                                    float weight11 = dx * dy;
+
+                                    // 应用到四个相邻像素
+                                    PaintAlphamapBilinear(alphaY0 * alphamapWidth + alphaX0, terrainLayerIndex, blendStrength * weight00);
+                                    PaintAlphamapBilinear(alphaY0 * alphamapWidth + alphaX1, terrainLayerIndex, blendStrength * weight01);
+                                    PaintAlphamapBilinear(alphaY1 * alphamapWidth + alphaX0, terrainLayerIndex, blendStrength * weight10);
+                                    PaintAlphamapBilinear(alphaY1 * alphamapWidth + alphaX1, terrainLayerIndex, blendStrength * weight11);
                                 }
                             }
                         }
                     }
                 }
             }
-            
-            private void PaintAlphamap(int pixelIndex, int layerIndex, float strength)
+
+            private void PaintAlphamapBilinear(int pixelIndex, int layerIndex, float strength)
             {
                 // 检查像素索引和层索引是否有效
                 if (pixelIndex < 0 || pixelIndex >= alphamapWidth * alphamapHeight) return;
                 if (layerIndex < 0 || layerIndex >= alphamapLayers) return;
-                
+
                 int startIdx = pixelIndex * alphamapLayers;
-                
+
                 // 检查起始索引是否在范围内
                 if (startIdx + alphamapLayers > alphaMap.Length) return;
-                
+
                 float currentWeight = alphaMap[startIdx + layerIndex];
                 float targetWeight = math.lerp(currentWeight, 1.0f, strength);
 
@@ -166,9 +194,9 @@ namespace RoadSystem
                     for (int i = 0; i < alphamapLayers; i++)
                     {
                         if (i == layerIndex) continue;
-                        
-                        if (startIdx + i >= alphaMap.Length) continue; // 额外检查
-                        
+
+                        if (startIdx + i >= alphaMap.Length) continue;
+
                         if (originalOtherLayersTotal > 0.001f)
                         {
                             newWeights[i] = alphaMap[startIdx + i] / originalOtherLayersTotal * remainingWeight;
@@ -180,17 +208,77 @@ namespace RoadSystem
                     }
 
                     float totalWeight = 0;
-                    for (int i = 0; i < alphamapLayers; i++) 
+                    for (int i = 0; i < alphamapLayers; i++)
+                    {
+                        if (startIdx + i < alphaMap.Length)
+                        {
+                            totalWeight += newWeights[i];
+                        }
+                    }
+
+                    if (totalWeight > 0.001f)
+                    {
+                        for (int i = 0; i < alphamapLayers; i++)
+                        {
+                            if (startIdx + i < alphaMap.Length)
+                            {
+                                alphaMap[startIdx + i] = newWeights[i] / totalWeight;
+                            }
+                        }
+                    }
+                }
+                finally { newWeights.Dispose(); }
+            }
+
+            private void PaintAlphamap(int pixelIndex, int layerIndex, float strength)
+            {
+                // 检查像素索引和层索引是否有效
+                if (pixelIndex < 0 || pixelIndex >= alphamapWidth * alphamapHeight) return;
+                if (layerIndex < 0 || layerIndex >= alphamapLayers) return;
+
+                int startIdx = pixelIndex * alphamapLayers;
+
+                // 检查起始索引是否在范围内
+                if (startIdx + alphamapLayers > alphaMap.Length) return;
+
+                float currentWeight = alphaMap[startIdx + layerIndex];
+                float targetWeight = math.lerp(currentWeight, 1.0f, strength);
+
+                var newWeights = new NativeArray<float>(alphamapLayers, Allocator.Temp);
+                try
+                {
+                    newWeights[layerIndex] = targetWeight;
+                    float remainingWeight = 1.0f - targetWeight;
+                    float originalOtherLayersTotal = 1.0f - currentWeight;
+
+                    for (int i = 0; i < alphamapLayers; i++)
+                    {
+                        if (i == layerIndex) continue;
+
+                        if (startIdx + i >= alphaMap.Length) continue; // 额外检查
+
+                        if (originalOtherLayersTotal > 0.001f)
+                        {
+                            newWeights[i] = alphaMap[startIdx + i] / originalOtherLayersTotal * remainingWeight;
+                        }
+                        else
+                        {
+                            newWeights[i] = remainingWeight / (alphamapLayers - 1);
+                        }
+                    }
+
+                    float totalWeight = 0;
+                    for (int i = 0; i < alphamapLayers; i++)
                     {
                         if (startIdx + i < alphaMap.Length) // 额外检查
                         {
                             totalWeight += newWeights[i];
                         }
                     }
-                    
+
                     if (totalWeight > 0.001f)
                     {
-                        for (int i = 0; i < alphamapLayers; i++) 
+                        for (int i = 0; i < alphamapLayers; i++)
                         {
                             if (startIdx + i < alphaMap.Length) // 额外检查
                             {
