@@ -18,7 +18,7 @@ namespace RoadSystem
         {
             if (roadManager.ControlPoints.Count < 2)
             {
-                Debug.Log("道路点数量不足，无法进行地形修改。");
+                Debug.LogWarning("道路点数量不足，无法进行地形修改。");
                 return;
             }
 
@@ -31,32 +31,17 @@ namespace RoadSystem
             try
             {
                 // 3. 根据模式选择并执行相应的总处理器
-                if (settings.modificationMode == ProcessingMode.CPU)
+                switch (settings.modificationMode)
                 {
-                    // ----------------------------------------------------
-                    // CPU模式：使用我们之前创建的高性能统一处理器
-                    // ----------------------------------------------------
-                    EditorUtility.DisplayProgressBar("地形修改", "正在初始化CPU统一处理器...", 0f);
-                    var cpuProcessor = new UnifiedTerrainProcessor();
-                    cpuProcessor.Execute(roadManager);
-                }
-                else if (settings.modificationMode == ProcessingMode.GPU)
-                {
-                    // ----------------------------------------------------
-                    // GPU模式：使用专门的GPU处理器（通常是烘焙RenderTexture）
-                    // 这里的逻辑是先将所有道路信息烘焙到一张或多张纹理上，
-                    // 然后再将这些纹理数据应用到每个相关的地形上。
-                    // 这是一个假设的GPU处理器，你需要根据你的GPU模块进行适配。
-                    // ----------------------------------------------------
-                    EditorUtility.DisplayProgressBar("地形修改", "正在初始化GPU处理器...", 0f);
-
-                    // 假设你有一个名为 GPUProcessor 的类来处理GPU流程
-                    // var gpuProcessor = new GPUProcessor(); 
-                    // gpuProcessor.Execute(roadManager);
-
-                    // 如果你的GPU模块还能用，可以暂时保留旧的循环逻辑作为兼容
-                    ExecuteLegacyGPU(roadManager);
-                    Debug.Log("已执行GPU模式（兼容模式）。为了获得最佳性能，建议将GPU逻辑也重构为统一处理器。");
+                    case ProcessingMode.CPU:
+                        ExecuteCPU(roadManager);
+                        break;
+                    case ProcessingMode.GPU:
+                        ExecuteGPU(roadManager);
+                        break;
+                    default:
+                        Debug.LogWarning($"不支持的处理模式: {settings.modificationMode}");
+                        break;
                 }
             }
             finally
@@ -66,18 +51,69 @@ namespace RoadSystem
             }
         }
 
+        private void ExecuteCPU(RoadManager roadManager)
+        {
+            EditorUtility.DisplayProgressBar("地形修改", "正在初始化CPU统一处理器...", 0f);
+            
+            var cpuProcessor = new MultiTerrainProcessor();
+            cpuProcessor.Execute(roadManager);
+            
+            Debug.Log("CPU模式地形修改完成。");
+        }
+
+        private void ExecuteGPU(RoadManager roadManager)
+        {
+            EditorUtility.DisplayProgressBar("地形修改", "正在初始化GPU处理器...", 0f);
+            
+            // 临时兼容旧的GPU模块
+            ExecuteLegacyGPU(roadManager);
+            
+            Debug.Log("GPU模式地形修改完成（兼容模式）。为了获得最佳性能，建议将GPU逻辑也重构为统一处理器。");
+        }
+
         /// <summary>
         /// 这是一个临时的兼容方法，用于执行旧的、逐个处理地形的GPU模块。
         /// 这样可以确保在重构CPU路径时，原有的GPU功能不受影响。
         /// </summary>
         private void ExecuteLegacyGPU(RoadManager roadManager)
         {
+            var affectedTerrains = GetAffectedTerrains(roadManager);
+            
+            if (affectedTerrains.Count == 0)
+            {
+                Debug.Log("未找到受影响的地形。");
+                return;
+            }
+
+            var gpuModule = new GPUFlattenAndTextureModule();
+
+            for (int i = 0; i < affectedTerrains.Count; i++)
+            {
+                var terrain = affectedTerrains[i];
+                
+                EditorUtility.DisplayProgressBar(
+                    "地形修改 (GPU兼容模式)",
+                    $"处理地形: {terrain.name}",
+                    (float)i / affectedTerrains.Count);
+
+                var data = new TerrainModificationData(terrain, roadManager);
+                gpuModule.Execute(data);
+
+                EditorUtility.SetDirty(terrain.terrainData);
+            }
+        }
+
+        private List<Terrain> GetAffectedTerrains(RoadManager roadManager)
+        {
             var affectedTerrains = new List<Terrain>();
             var allTerrains = Terrain.activeTerrains;
 
             foreach (var terrain in allTerrains)
             {
-                var terrainBounds = new Bounds(terrain.transform.position + terrain.terrainData.size / 2, terrain.terrainData.size);
+                var terrainBounds = new Bounds(
+                    terrain.transform.position + terrain.terrainData.size / 2, 
+                    terrain.terrainData.size);
+                
                 bool isAffected = roadManager.ControlPoints.Any(point =>
                     terrainBounds.Contains(new Vector3(point.position.x, 0, point.position.z)));
 
@@ -86,25 +122,8 @@ namespace RoadSystem
                     affectedTerrains.Add(terrain);
                 }
             }
-            var gpuModule = new GPUFlattenAndTextureModule(); // 直接实例化旧的GPU模块
 
-            int terrainIndex = 0;
-            foreach (var terrain in affectedTerrains)
-            {
-                EditorUtility.DisplayProgressBar(
-                    "地形修改 (GPU兼容模式)",
-                    $"处理地形: {terrain.name}",
-                    (float)terrainIndex / affectedTerrains.Count);
-
-                var data = new TerrainModificationData(terrain, roadManager);
-                gpuModule.Execute(data);
-
-                EditorUtility.SetDirty(terrain.terrainData);
-                terrainIndex++;
-            }
+            return affectedTerrains;
         }
     }
-
-
-
 }

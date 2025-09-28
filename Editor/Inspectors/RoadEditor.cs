@@ -122,7 +122,7 @@ namespace RoadSystem.Editor
                 // =================================================================
                 // [核心修改] 使用全新的统一处理器
                 // =================================================================
-                var processor = new UnifiedTerrainProcessor();
+                var processor = new MultiTerrainProcessor();
                 processor.Execute(roadManager);
                 // =================================================================
 
