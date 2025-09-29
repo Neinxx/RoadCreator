@@ -2,6 +2,7 @@
 using UnityEngine;
 using UnityEditor;
 using System.IO;
+using System.Collections.Generic;
 
 namespace RoadSystem.Editor
 {
@@ -80,6 +81,34 @@ namespace RoadSystem.Editor
             }
 
             EditorUtility.SetDirty(layer);
+        }
+        public static Vector3 GetDisplayPoint(IReadOnlyList<RoadControlPoint> points, float t, RoadConfig config, Transform transform)
+        {
+            if (points == null || points.Count == 0 || config == null || transform == null)
+            {
+                return Vector3.zero;
+            }
+
+            // 步骤 1: 使用与 Job 中相同的线性插值逻辑获取局部坐标点
+            Vector3 localPos = SplineUtility.GetPoint(points, t);
+
+            // 步骤 2: 将局部坐标转换为世界坐标
+            Vector3 worldPos = transform.TransformPoint(localPos);
+
+            // 步骤 3: (可选) 根据配置进行地形贴合
+            if (config.conformToTerrainUndulations && config.terrainConformity > 0 && Terrain.activeTerrain != null)
+            {
+                Terrain terrain = Terrain.activeTerrain;
+                // 获取地形在当前点的世界高度
+                float terrainHeight = terrain.SampleHeight(worldPos) + terrain.transform.position.y;
+                // 根据贴合度 (Conformity) 在原始高度和地形高度之间进行插值
+                worldPos.y = Mathf.Lerp(worldPos.y, terrainHeight, config.terrainConformity);
+            }
+
+            // 步骤 4: 应用最终的预览高度偏移
+            worldPos.y += config.previewHeightOffset;
+
+            return worldPos;
         }
     }
 }

@@ -22,7 +22,7 @@ MonoBehaviour:
     terrainLayer: {fileID: 8574412962073106934, guid: 69debc15b685aef4aa7bb2783ddd8a2a,
       type: 2}
     textureBlendFactor: 0
-    boundaryWobbleFrequency: 2.4
+    boundaryWobbleFrequency: 0.14
     boundaryWobbleAmplitude: 1.08
     isExpanded: 1
     offsetFromCenter: -0.47
@@ -33,7 +33,7 @@ MonoBehaviour:
     terrainLayer: {fileID: 8574412962073106934, guid: 8ebab97ea0aadcd45a9e02f16b5c2dc8,
       type: 2}
     textureBlendFactor: 0
-    boundaryWobbleFrequency: 8.3
+    boundaryWobbleFrequency: 0.239
     boundaryWobbleAmplitude: 0.48
     isExpanded: 1
     offsetFromCenter: 0.13
@@ -44,7 +44,7 @@ MonoBehaviour:
     terrainLayer: {fileID: 8574412962073106934, guid: 93b47c02586f3a741aecf158db6d0c49,
       type: 2}
     textureBlendFactor: 0
-    boundaryWobbleFrequency: 6.9
+    boundaryWobbleFrequency: 0.15
     boundaryWobbleAmplitude: 0.46
     isExpanded: 1
     offsetFromCenter: 0.03
@@ -55,7 +55,7 @@ MonoBehaviour:
     terrainLayer: {fileID: 8574412962073106934, guid: 8ebab97ea0aadcd45a9e02f16b5c2dc8,
       type: 2}
     textureBlendFactor: 0
-    boundaryWobbleFrequency: 4.3
+    boundaryWobbleFrequency: 0.15
     boundaryWobbleAmplitude: 0.48
     isExpanded: 1
     offsetFromCenter: 0

@@ -40,7 +40,7 @@ namespace RoadSystem
 
         public static List<Terrain> FindAffectedTerrains(Bounds worldBounds)
         {
-            return Object.FindObjectsOfType<Terrain>()
+            return UnityEngine.Object.FindObjectsOfType<Terrain>()
          .Where(t => t != null)
          .Where(t => new Bounds(t.transform.position + t.terrainData.size / 2, t.terrainData.size).Intersects(worldBounds))
          .ToList();

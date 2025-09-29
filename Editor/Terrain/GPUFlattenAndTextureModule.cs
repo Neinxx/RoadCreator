@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using UnityEditor;
 using RoadSystem;
 using System.Collections.Generic;
+using RoadSystem.Editor;
 
 namespace RoadSystem
 {
@@ -153,6 +154,11 @@ namespace RoadSystem
             cs.SetFloat("flattenStrength", terrainConfig.flattenStrength);
             cs.SetFloat("flattenOffset", terrainConfig.flattenOffset);
             cs.SetFloat("textureNoiseScale", terrainConfig.textureNoiseScale);
+        }
+
+        public void Execute(TerrainModificationData data, RoadDataBaker.BakerResult bakerResult, int roadLayerIndex, Texture2D roadDataMap)
+        {
+            throw new System.NotImplementedException();
         }
     }
 }

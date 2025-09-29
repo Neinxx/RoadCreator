@@ -3,119 +3,142 @@ using UnityEngine;
 using Unity.Jobs;
 using Unity.Collections;
 using Unity.Mathematics;
-using System.Linq; // 需要引入 Linq
+using Unity.Burst;
+using System.Linq;
 
 namespace RoadSystem.Editor
 {
-    /// <summary>
-    /// [重构后]
-    /// 模块的职责变得非常纯粹：只负责处理传入的单个 TerrainModificationData。
-    /// 它不再关心如何寻找地形或处理多个地形，这些都由 TerrainModifier 总指挥来完成。
-    /// </summary>
     public class CPUFlattenAndTextureModule : ITerrainModificationModule
     {
-        public string ModuleName => "CPU Direct Triangle-Based Processor";
+        public string ModuleName => "CPU Advanced Baker";
 
-        public void Execute(TerrainModificationData data)
+        public void Execute(TerrainModificationData data, RoadDataBaker.BakerResult bakerResult, int roadLayerIndex, Texture2D roadDataMap)
         {
             var roadManager = data.RoadManager;
             var terrain = data.Terrain;
             var roadMesh = roadManager.MeshFilter.sharedMesh;
-
-            if (terrain == null || roadMesh == null || roadMesh.vertexCount == 0) return;
-
-            var roadConfig = roadManager.RoadConfig;
             var terrainConfig = roadManager.TerrainConfig;
+
+            if (terrain == null || roadMesh == null || roadMesh.vertexCount == 0 || terrainConfig == null) return;
+
             var terrainData = terrain.terrainData;
-
-            // --- 声明所有需要手动管理的内存 ---
-            NativeArray<Vector3> meshVertices = default;
-            NativeArray<int> meshTriangles = default;
-            NativeArray<int2> vertexLayerInfos = default;
+            
+            NativeArray<Vector3> roadVertices = default;
+            NativeArray<int> roadTriangles = default;
+            NativeArray<int> vertexToLayerIndexMap = default;
             NativeArray<float> heightMap = default;
-            NativeArray<float> alphaMap = default;
-            NativeArray<int> layerMapping = default;
-
+            NativeArray<float> alphamaps1D = default;
+            NativeArray<float4> alphamapData = default;
+            NativeArray<float4> roadDataMapNative = default;
+            
             try
             {
-                // --- 1. 分配内存并准备道路网格数据 ---
-                meshVertices = new NativeArray<Vector3>(roadMesh.vertices, Allocator.TempJob);
-                meshTriangles = new NativeArray<int>(roadMesh.triangles, Allocator.TempJob);
-                // [修正] 这里不再使用 using var，所以可以自由修改
-                vertexLayerInfos = new NativeArray<int2>(meshVertices.Length, Allocator.TempJob);
-
+                // --- 1. 准备通用数据 (被两个 Job 共享) ---
+                roadVertices = new NativeArray<Vector3>(roadMesh.vertices, Allocator.TempJob);
+                roadTriangles = new NativeArray<int>(roadMesh.triangles, Allocator.TempJob);
+                vertexToLayerIndexMap = new NativeArray<int>(roadVertices.Length, Allocator.TempJob);
                 for (int i = 0; i < roadMesh.subMeshCount; i++)
                 {
-                    if (i >= roadConfig.layerProfiles.Count) continue;
-                    var profile = roadConfig.layerProfiles[i];
-                    var subMeshTriangles = roadMesh.GetTriangles(i);
-                    var layerInfo = new int2(i, (int)(profile.textureBlendFactor * 1000f));
-                    foreach (int vertexIndex in subMeshTriangles)
+                    foreach (int vertexIndex in roadMesh.GetTriangles(i))
                     {
-                        if (vertexIndex < vertexLayerInfos.Length)
-                        {
-                            // 现在这样写完全没有问题
-                            vertexLayerInfos[vertexIndex] = layerInfo;
-                        }
+                        vertexToLayerIndexMap[vertexIndex] = i;
                     }
                 }
 
-                // --- 2. 准备地形数据 ---
-                var heightsData = terrainData.GetHeights(0, 0, terrainData.heightmapResolution, terrainData.heightmapResolution);
-                var alphamapsData = terrainData.GetAlphamaps(0, 0, terrainData.alphamapWidth, terrainData.alphamapHeight);
+                // --- 2. 调度高度压平 Job ---
+                var heights3D = terrainData.GetHeights(0, 0, terrainData.heightmapResolution, terrainData.heightmapResolution);
+                heightMap = new NativeArray<float>(heights3D.Cast<float>().ToArray(), Allocator.TempJob);
 
-                heightMap = new NativeArray<float>(heightsData.Cast<float>().ToArray(), Allocator.TempJob);
-                alphaMap = new NativeArray<float>(alphamapsData.Cast<float>().ToArray(), Allocator.TempJob);
-                
-                // --- 3. 准备图层映射 ---
-                layerMapping = new NativeArray<int>(roadConfig.layerProfiles.Count, Allocator.TempJob);
-                for (int i = 0; i < roadConfig.layerProfiles.Count; i++)
-                {
-                    layerMapping[i] = EditorTerrainUtility.EnsureAndGetLayerIndex(terrain, roadConfig.layerProfiles[i].terrainLayer);
-                }
-
-                // --- 4. 创建并调度 Job ---
-                var job = new TerrainJobs.TriangleBasedProcessingJob
+                var flattenJob = new TerrainJobs.FlattenHeightmapJob
                 {
                     terrainPosition = terrain.transform.position,
                     terrainSize = terrainData.size,
                     heightmapResolution = terrainData.heightmapResolution,
-                    roadTransform = roadManager.transform.localToWorldMatrix,
+                    roadLocalToWorldMatrix = roadManager.transform.localToWorldMatrix,
+                    roadVertices = roadVertices,
+                    roadTriangles = roadTriangles,
                     flattenOffset = terrainConfig.flattenOffset,
-                    vertices = meshVertices,
-                    triangles = meshTriangles,
-                    vertexLayerInfos = vertexLayerInfos,
-                    heightMap = heightMap,
-                    alphaMap = alphaMap,
+                    heightMap = heightMap
+                };
+                var flattenHandle = flattenJob.Schedule(roadTriangles.Length / 3, 32);
+
+                // --- 3. 调度纹理绘制流水线 ---
+                var alphamaps3D = terrainData.GetAlphamaps(0, 0, terrainData.alphamapWidth, terrainData.alphamapHeight);
+                alphamaps1D = new NativeArray<float>(alphamaps3D.Cast<float>().ToArray(), Allocator.TempJob);
+                alphamapData = new NativeArray<float4>(terrainData.alphamapWidth * terrainData.alphamapHeight, Allocator.TempJob);
+                
+                var conversionToFloat4Job = new ConvertToFloat4Job 
+                {
+                    alphamaps = alphamaps1D,
                     alphamapWidth = terrainData.alphamapWidth,
                     alphamapHeight = terrainData.alphamapHeight,
                     alphamapLayers = terrainData.alphamapLayers,
-                    flattenStrength = terrainConfig.flattenStrength,
-                    layerMapping = layerMapping,
-                    heightmapResolutionMinusOne = terrainData.heightmapResolution - 1,
-                    alphamapResolutionMinusOne = terrainData.alphamapWidth - 1
+                    output = alphamapData
                 };
+                var conversionHandle = conversionToFloat4Job.Schedule(alphamapData.Length, 256);
+                alphamaps1D.Dispose(conversionHandle);
 
-                job.Schedule().Complete();
+                roadDataMapNative = new NativeArray<float4>(roadDataMap.width * roadDataMap.height, Allocator.TempJob);
 
-                // --- 5. 将修改后的数据写回地形 ---
-                // [修正] 从 NativeArray 写回到托管数组
-                var modifiedHeights = heightMap.ToArray().To2DFloatArray(terrainData.heightmapResolution, terrainData.heightmapResolution);
-                terrainData.SetHeights(0, 0, modifiedHeights);
-            
-                float[,,] alphaMap3D = alphaMap.To3DArray(terrainData.alphamapHeight, terrainData.alphamapWidth, terrainData.alphamapLayers);
-                terrainData.SetAlphamaps(0, 0, alphaMap3D);
+                var bakeJob = new TerrainJobs.BakeRoadToAlphamapJob 
+                {
+                    terrainPosition = terrain.transform.position,
+                    terrainSize = terrainData.size,
+                    alphamapWidth = terrainData.alphamapWidth,
+                    alphamapHeight = terrainData.alphamapHeight, // 修正拼写错误
+                    roadLocalToWorldMatrix = roadManager.transform.localToWorldMatrix,
+                    roadVertices = roadVertices,
+                    roadTriangles = roadTriangles,
+                    vertexToLayerIndexMap = vertexToLayerIndexMap,
+                    alphamapData = alphamapData,
+                    roadDataMap = roadDataMapNative,
+                    roadLayerSplatIndex = roadLayerIndex % 4,
+                    baseLayerWeight = 1.0f
+                };
+                var bakeHandle = bakeJob.Schedule(roadTriangles.Length / 3, 32, conversionHandle);
+                
+                // --- 4. [核心修复] 创建并使用“联合句柄” ---
+                var combinedHandle = JobHandle.CombineDependencies(flattenHandle, bakeHandle);
+                
+                // --- 5. 等待所有 Jobs 完成 ---
+                combinedHandle.Complete();
+                
+                // --- 6. 将所有数据写回地形 (现在这里是绝对安全的) ---
+                var finalHeights = heightMap.ToArray();
+                System.Buffer.BlockCopy(finalHeights, 0, heights3D, 0, finalHeights.Length * sizeof(float));
+                terrainData.SetHeights(0, 0, heights3D);
+                
+                var finalAlphamapData = alphamapData.ToArray();
+                for (int y = 0; y < terrainData.alphamapHeight; y++) // 修正拼写错误
+                {
+                    for (int x = 0; x < terrainData.alphamapWidth; x++)
+                    {
+                        int index1D = y * terrainData.alphamapWidth + x;
+                        float4 dataPoint = finalAlphamapData[index1D];
+                        if (terrainData.alphamapLayers > 0) alphamaps3D[y, x, 0] = dataPoint.x;
+                        if (terrainData.alphamapLayers > 1) alphamaps3D[y, x, 1] = dataPoint.y;
+                        if (terrainData.alphamapLayers > 2) alphamaps3D[y, x, 2] = dataPoint.z;
+                        if (terrainData.alphamapLayers > 3) alphamaps3D[y, x, 3] = dataPoint.w;
+                    }
+                }
+                terrainData.SetAlphamaps(0, 0, alphamaps3D);
+
+                var finalRoadDataMapArray = roadDataMapNative.ToArray();
+                roadDataMap.SetPixels(finalRoadDataMapArray.Select(c => new Color(c.x, c.y, c.z, c.w)).ToArray());
+                roadDataMap.Apply();
             }
             finally
             {
-                // --- 6. [重要] 确保所有分配的内存都被释放 ---
-                if (meshVertices.IsCreated) meshVertices.Dispose();
-                if (meshTriangles.IsCreated) meshTriangles.Dispose();
-                if (vertexLayerInfos.IsCreated) vertexLayerInfos.Dispose();
+                // --- 7. 清理 ---
+                if (roadVertices.IsCreated) roadVertices.Dispose();
+                if (roadTriangles.IsCreated) roadTriangles.Dispose();
+                if (vertexToLayerIndexMap.IsCreated) vertexToLayerIndexMap.Dispose();
                 if (heightMap.IsCreated) heightMap.Dispose();
-                if (alphaMap.IsCreated) alphaMap.Dispose();
-                if (layerMapping.IsCreated) layerMapping.Dispose();
+                if (alphamapData.IsCreated) alphamapData.Dispose();
+                if (roadDataMapNative.IsCreated) roadDataMapNative.Dispose();
             }
         }
     }
+    
+    // ... (ConvertToFloat4Job 和 ConvertBackTo3DArrayJob 保持不变)
 }

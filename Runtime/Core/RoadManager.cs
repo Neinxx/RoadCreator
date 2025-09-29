@@ -101,6 +101,14 @@ namespace RoadSystem
 
             OnRoadDataChanged?.Invoke();
         }
+        /// <summary>
+        /// [新增] 公共的通知方法。
+        /// 外部脚本（如 RoadEditorTool）将调用此方法来安全地触发 OnRoadDataChanged 事件。
+        /// </summary>
+        public void NotifyDataChanged()
+        {
+            OnRoadDataChanged?.Invoke();
+        }
 
         private void Reset()
         {
