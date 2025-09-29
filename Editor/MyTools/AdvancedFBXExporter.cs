@@ -4,42 +4,81 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Autodesk.Fbx; // 确保项目中已正确安装 Autodesk FBX SDK
+using UnityEngine.AI;
 
 public class AdvancedFBXExporter : EditorWindow
 {
-    // --- 配置参数 ---
-    private string exportPath = "";
-    private List<GameObject> selectedObjects = new List<GameObject>();
+    // --- 公共配置参数 (以便 Visualizer 文件能访问) ---
+    public string exportPath = "Assets/";
+    public List<GameObject> selectedObjects = new List<GameObject>();
 
-    // 网格生成参数
-    private float maxWalkableSlopeAngle = 45.0f;
-    private float maxStepHeight = 0.4f;
+    public float agentRadius = 0.5f;
+    public float agentHeight = 2.0f;
+    public float maxWalkableSlopeAngle = 45.0f;
+    public float maxStepHeight = 0.4f;
 
-    // --- 新增：优化与简化参数 ---
-    private float voxelCellSize = 0.3f; // 体素单元格大小（米）。关键参数！
-    private int agentWalkableHeight = 2; // 角色可通过的高度（体素单位）
-    private int agentWalkableClimb = 1; // 角色可攀爬的高度（体素单位）
+    public float minRegionArea = 2.0f;
+    public bool useHeightLimit = false;
+    public float maxHeight = 10.0f;
 
-    // 导出选项
-    private bool exportOriginalModel = true;
+    public bool showVisualizers = true;
+    public bool exportOriginalModel = true;
+    private Vector3 calculatedGroundPosition;
 
     // --- 内部状态 ---
     private Vector2 scrollPosition;
+    public Bounds calculatedBounds;
 
-    [MenuItem("Tools/Advanced FBX Exporter (Optimized NavMesh Generation)")]
+    [MenuItem("Tools/Advanced FBX Exporter (Unity NavMesh)")]
     public static void ShowWindow()
     {
-        GetWindow<AdvancedFBXExporter>("Optimized FBX NavMesh Generator");
+        GetWindow<AdvancedFBXExporter>("FBX NavMesh Generator");
     }
+
+    #region Scene Visualization Hooks
+
+    private void OnEnable()
+    {
+
+        SceneView.duringSceneGui += OnSceneGUI;
+    }
+
+    private void OnDisable()
+    {
+
+        SceneView.duringSceneGui -= OnSceneGUI;
+    }
+
+
+    private void OnSceneGUI(SceneView sceneView)
+    {
+        // 【修改】只在这里处理输入和修改数据
+        EditorGUI.BeginChangeCheck();
+        float newHeight = ExporterVisualizer.DrawHeightHandle(this);
+        if (EditorGUI.EndChangeCheck())
+        {
+            Undo.RecordObject(this, "Change Max Height");
+            maxHeight = newHeight;
+            RecalculateBoundsAndGround(); // 高度变化也需要重算Bounds
+            Repaint(); // 重绘窗口
+        }
+
+        // 【修改】将预计算的地面位置传给绘制函数
+        ExporterVisualizer.Draw(this, calculatedGroundPosition);
+    }
+
+    #endregion
 
     #region GUI
 
     private void OnGUI()
     {
-        EditorGUILayout.LabelField("Optimized FBX NavMesh Generator", EditorStyles.boldLabel);
-        EditorGUILayout.HelpBox("此工具使用高性能的体素化方法生成一个低面数的、干净的可行走区域网格。", MessageType.Info);
+        // 【优化关键】开始监视UI控件的变化
+        EditorGUI.BeginChangeCheck();
 
-        // --- 导出路径设置 ---
+        EditorGUILayout.LabelField("FBX NavMesh's mesh Generator ", EditorStyles.boldLabel);
+        EditorGUILayout.HelpBox("生成寻路网格的网格，并可将其与原始模型一同导出为FBX,方便编辑。", MessageType.Info);
+
         EditorGUILayout.BeginVertical("box");
         GUILayout.Label("Export Settings", EditorStyles.boldLabel);
         EditorGUILayout.BeginHorizontal();
@@ -52,46 +91,60 @@ public class AdvancedFBXExporter : EditorWindow
         EditorGUILayout.EndHorizontal();
         EditorGUILayout.EndVertical();
 
-        // --- 网格生成参数 ---
         EditorGUILayout.BeginVertical("box");
-        GUILayout.Label("Generation Core Settings", EditorStyles.boldLabel);
+        GUILayout.Label("NavMesh Generation Settings", EditorStyles.boldLabel);
+        agentRadius = EditorGUILayout.FloatField(new GUIContent("Agent Radius (meters)"), agentRadius);
+        agentHeight = EditorGUILayout.FloatField(new GUIContent("Agent Height (meters)"), agentHeight);
         maxWalkableSlopeAngle = EditorGUILayout.Slider("Max Walkable Slope (°)", maxWalkableSlopeAngle, 0.0f, 90.0f);
-        maxStepHeight = EditorGUILayout.FloatField("Max Step Height (meters)", maxStepHeight);
+        maxStepHeight = EditorGUILayout.FloatField(new GUIContent("Max Step Height (meters)"), maxStepHeight);
         EditorGUILayout.EndVertical();
 
-        // --- 优化参数 ---
         EditorGUILayout.BeginVertical("box");
-        GUILayout.Label("Performance & Simplification Settings", EditorStyles.boldLabel);
-        voxelCellSize = EditorGUILayout.FloatField(new GUIContent("Voxel Cell Size (meters)", "关键参数！值越小细节越多，但速度越慢，面数越多。推荐0.2-0.5。"), voxelCellSize);
-        EditorGUILayout.HelpBox("单元格大小直接控制最终网格的精度和面数。", MessageType.Info);
+        GUILayout.Label("Filtering & Cleanup Settings", EditorStyles.boldLabel);
+        minRegionArea = EditorGUILayout.FloatField(new GUIContent("Min Region Area"), minRegionArea);
+        useHeightLimit = EditorGUILayout.BeginToggleGroup(new GUIContent("Use Max Height Limit"), useHeightLimit);
+        maxHeight = EditorGUILayout.FloatField("Max Height (Y value)", maxHeight);
+        EditorGUILayout.EndToggleGroup();
         EditorGUILayout.EndVertical();
 
-        // --- 导出选项 ---
+        EditorGUILayout.BeginVertical("box");
+        GUILayout.Label("Visualization Settings", EditorStyles.boldLabel);
+        showVisualizers = EditorGUILayout.Toggle(new GUIContent("Show In-Scene Visualizers"), showVisualizers);
+        EditorGUILayout.EndVertical();
+
         EditorGUILayout.BeginVertical("box");
         GUILayout.Label("Export Options", EditorStyles.boldLabel);
         exportOriginalModel = EditorGUILayout.Toggle("Export Combined Original Model", exportOriginalModel);
         EditorGUILayout.EndVertical();
 
-        // --- 物体选择 ---
-        // ... (GUI部分保持不变) ...
         EditorGUILayout.BeginVertical("box");
         GUILayout.Label("Objects to Process", EditorStyles.boldLabel);
         if (GUILayout.Button("Update from Scene Selection"))
         {
             selectedObjects.Clear();
-            selectedObjects.AddRange(Selection.gameObjects);
+            selectedObjects.AddRange(Selection.gameObjects.Where(go => go.activeInHierarchy));
+            RecalculateBoundsAndGround(); // 更新选择时，需要立即更新一次包围盒
         }
         scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition, GUILayout.Height(100));
-        if (selectedObjects.Count == 0) EditorGUILayout.LabelField("No objects selected.");
+        if (selectedObjects.Count == 0) EditorGUILayout.LabelField("No active objects selected.");
         else { for (int i = 0; i < selectedObjects.Count; i++) { EditorGUILayout.ObjectField($"Object {i + 1}", selectedObjects[i], typeof(GameObject), true); } }
         EditorGUILayout.EndScrollView();
         EditorGUILayout.EndVertical();
 
-        // --- 导出按钮 ---
         GUILayout.Space(10);
-        if (GUILayout.Button("Generate Optimized NavMesh and Export", GUILayout.Height(40)))
+        if (GUILayout.Button("Generate NavMesh and Export", GUILayout.Height(40)))
         {
             if (ValidateSettings()) { ProcessAndExport(); }
+        }
+
+
+        if (EditorGUI.EndChangeCheck())
+        {
+            // 重新计算包围盒，因为可能有影响它的参数（如高度限制）发生了变化
+            RecalculateBoundsAndGround();
+
+            // 命令所有场景视图重绘，从而更新指示器
+            SceneView.RepaintAll();
         }
     }
 
@@ -99,13 +152,6 @@ public class AdvancedFBXExporter : EditorWindow
     {
         if (selectedObjects.Count == 0) { EditorUtility.DisplayDialog("Error", "No objects selected for export.", "OK"); return false; }
         if (string.IsNullOrEmpty(exportPath) || !Directory.Exists(exportPath)) { EditorUtility.DisplayDialog("Error", "Invalid export path.", "OK"); return false; }
-        if (maxStepHeight < 0) maxStepHeight = 0;
-        if (voxelCellSize < 0.01f) voxelCellSize = 0.01f;
-        
-        // 更新体素高度参数
-        agentWalkableClimb = Mathf.Max(1, Mathf.FloorToInt(maxStepHeight / voxelCellSize)); // 使用voxelCellSize作为高度单位
-        agentWalkableHeight = Mathf.Max(agentWalkableClimb + 1, Mathf.FloorToInt(2.0f / voxelCellSize)); // 假设角色高度为2米
-        
         return true;
     }
 
@@ -115,350 +161,162 @@ public class AdvancedFBXExporter : EditorWindow
 
     private void ProcessAndExport()
     {
-        // --- 阶段 1: 合并所有源网格 ---
-        EditorUtility.DisplayProgressBar("FBX Export", "Step 1/3: Combining source objects...", 0.1f);
-        Mesh masterMesh = CombineAllSelectedObjects();
-        if (masterMesh == null)
+        EditorUtility.DisplayProgressBar("FBX Export", "Step 1/3: Gathering source objects...", 0.1f);
+        Mesh masterMesh = null;
+        if (exportOriginalModel)
         {
-            EditorUtility.DisplayDialog("Error", "No valid meshes found in the selection.", "OK");
-            EditorUtility.ClearProgressBar();
-            return;
+            masterMesh = CombineAllSelectedObjects();
         }
 
-        // --- 阶段 2: 高性能生成可行走网格 ---
-        EditorUtility.DisplayProgressBar("FBX Export", "Step 2/3: Generating optimized walkable mesh...", 0.3f);
+        EditorUtility.DisplayProgressBar("FBX Export", "Step 2/3: Generating NavMesh...", 0.3f);
         Mesh generatedNavMesh = null;
-        try
-        {
-            generatedNavMesh = GenerateOptimizedNavMesh(masterMesh);
-        }
+        try { generatedNavMesh = GenerateNavMeshWithUnityAPI(); }
         catch (System.Exception e)
         {
-             Debug.LogError($"Optimized NavMesh Generation Failed: {e.Message}\n{e.StackTrace}");
-             EditorUtility.DisplayDialog("Generation Failed", $"An error occurred during NavMesh generation. Check the console.\n\nError: {e.Message}", "OK");
-             EditorUtility.ClearProgressBar();
-             return;
+            Debug.LogError($"NavMesh Generation Failed: {e.Message}\n{e.StackTrace}");
+            EditorUtility.DisplayDialog("Generation Failed", $"An error occurred. Check the console.\n\nError: {e.Message}", "OK");
         }
-       
+        finally { EditorUtility.ClearProgressBar(); }
+
+
         if (generatedNavMesh == null || generatedNavMesh.vertexCount == 0)
         {
-            EditorUtility.DisplayDialog("Warning", "Walkable mesh generation resulted in an empty mesh. Check your parameters.", "OK");
-            EditorUtility.ClearProgressBar();
+            EditorUtility.DisplayDialog("Warning", "NavMesh generation resulted in an empty mesh. Try adjusting parameters.", "OK");
             return;
         }
 
-        // --- 阶段 3: 导出到FBX ---
         EditorUtility.DisplayProgressBar("FBX Export", "Step 3/3: Writing FBX file...", 0.9f);
         ExportToFbx(masterMesh, generatedNavMesh);
     }
+
+    private Mesh GenerateNavMeshWithUnityAPI()
+    {
+        var sources = new List<NavMeshBuildSource>();
+        foreach (var go in selectedObjects)
+        {
+            if (!go.activeInHierarchy) continue;
+            var meshFilters = go.GetComponentsInChildren<MeshFilter>();
+            foreach (var mf in meshFilters)
+            {
+                if (mf.sharedMesh == null || !mf.gameObject.activeInHierarchy) continue;
+                sources.Add(new NavMeshBuildSource { shape = NavMeshBuildSourceShape.Mesh, sourceObject = mf.sharedMesh, transform = mf.transform.localToWorldMatrix, area = 0 });
+            }
+            var terrains = go.GetComponentsInChildren<Terrain>();
+            foreach (var t in terrains)
+            {
+                if (!t.gameObject.activeInHierarchy) continue;
+                sources.Add(new NavMeshBuildSource { shape = NavMeshBuildSourceShape.Terrain, sourceObject = t.terrainData, transform = Matrix4x4.TRS(t.transform.position, Quaternion.identity, Vector3.one), area = 0 });
+            }
+        }
+        if (sources.Count == 0) return null;
+
+        var settings = new NavMeshBuildSettings
+        {
+            agentRadius = agentRadius,
+            agentHeight = agentHeight,
+            agentSlope = maxWalkableSlopeAngle,
+            agentClimb = maxStepHeight,
+            minRegionArea = this.minRegionArea,
+            overrideVoxelSize = false,
+        };
+
+        RecalculateBoundsAndGround();
+        Bounds buildBounds = calculatedBounds;
+        buildBounds.Expand(0.1f);
+
+        NavMeshData navMeshData = NavMeshBuilder.BuildNavMeshData(settings, sources, buildBounds, Vector3.zero, Quaternion.identity);
+        if (navMeshData == null) return null;
+
+        var navMeshDataInstance = NavMesh.AddNavMeshData(navMeshData);
+        NavMeshTriangulation triangulation = NavMesh.CalculateTriangulation();
+        navMeshDataInstance.Remove();
+        Object.DestroyImmediate(navMeshData);
+
+        if (triangulation.vertices.Length == 0) return null;
+
+        var navMesh = new Mesh { name = "GeneratedNavMesh", vertices = triangulation.vertices, triangles = triangulation.indices };
+        navMesh.RecalculateNormals();
+        navMesh.RecalculateBounds();
+        return navMesh;
+    }
+
+    public void RecalculateBoundsAndGround()
+    {
+        if (selectedObjects.Count == 0) { calculatedBounds = new Bounds(Vector3.zero, Vector3.zero); return; }
+
+        Bounds bounds = new Bounds();
+        bool boundsInitialized = false;
+
+        foreach (var obj in selectedObjects)
+        {
+            var renderers = obj.GetComponentsInChildren<Renderer>();
+            foreach (var renderer in renderers)
+            {
+                if (!boundsInitialized) { bounds = renderer.bounds; boundsInitialized = true; }
+                else { bounds.Encapsulate(renderer.bounds); }
+            }
+        }
+
+        if (useHeightLimit)
+        {
+            float newMaxY = Mathf.Min(bounds.max.y, maxHeight);
+            float newMinY = Mathf.Min(bounds.min.y, newMaxY);
+            bounds.min = new Vector3(bounds.min.x, newMinY, bounds.min.z);
+            bounds.max = new Vector3(bounds.max.x, newMaxY, bounds.max.z);
+        }
+        calculatedBounds = bounds;
+        Ray ray = new Ray(calculatedBounds.center, Vector3.down);
+        if (Physics.Raycast(ray, out RaycastHit hit, calculatedBounds.size.y))
+        {
+            calculatedGroundPosition = hit.point;
+        }
+        else
+        {
+            calculatedGroundPosition = new Vector3(calculatedBounds.center.x, calculatedBounds.min.y, calculatedBounds.center.z);
+        }
+    }
+
+    #endregion
+
+    #region Mesh and FBX Utilities 
 
     private Mesh CombineAllSelectedObjects()
     {
         var allMeshes = new List<Mesh>();
         foreach (var obj in selectedObjects)
         {
-            // 递归获取所有子物体的网格
             var meshFilters = obj.GetComponentsInChildren<MeshFilter>();
             foreach (var mf in meshFilters)
             {
-                var mesh = GetMeshFromObject(mf.gameObject);
+                var mesh = GetMeshInWorldSpace(mf);
                 if (mesh != null) allMeshes.Add(mesh);
             }
-            // 处理地形
             var terrains = obj.GetComponentsInChildren<Terrain>();
-            foreach(var terrain in terrains)
+            foreach (var terrain in terrains)
             {
-                 var terrainMesh = GetMeshFromObject(terrain.gameObject);
-                 if(terrainMesh != null) allMeshes.Add(terrainMesh);
+                var terrainMesh = ConvertTerrainToMesh(terrain);
+                if (terrainMesh != null) allMeshes.Add(terrainMesh);
             }
         }
-        return CombineMeshes(allMeshes, "MasterSceneMesh");
+        return CombineMeshes(allMeshes, "CombinedOriginalScene");
     }
 
-    #endregion
-
-    #region Optimized NavMesh Generation
-
-    // 代表高度图中的一个高度区间
-    private class HeightSpan { public int min, max; }
-
-    private Mesh GenerateOptimizedNavMesh(Mesh sourceMesh)
+    private Mesh GetMeshInWorldSpace(MeshFilter mf)
     {
-        Bounds bounds = sourceMesh.bounds;
-        Vector3[] vertices = sourceMesh.vertices;
-        int[] triangles = sourceMesh.triangles;
-
-        // 1. 创建高度图 (Heightfield)
-        int gridWidth = Mathf.CeilToInt(bounds.size.x / voxelCellSize);
-        int gridDepth = Mathf.CeilToInt(bounds.size.z / voxelCellSize);
-        var heightfield = new Dictionary<int, HeightSpan>(); // 使用1D索引优化性能
-
-        // 2. 体素化 (Voxelize) - 将三角形光栅化到高度图中
-        float cosMaxSlope = Mathf.Cos(maxWalkableSlopeAngle * Mathf.Deg2Rad);
-        for (int i = 0; i < triangles.Length; i += 3)
-        {
-            Vector3 v0 = vertices[triangles[i]];
-            Vector3 v1 = vertices[triangles[i + 1]];
-            Vector3 v2 = vertices[triangles[i + 2]];
-
-            // 坡度检查
-            Vector3 normal = Vector3.Cross(v1 - v0, v2 - v0);
-            if (normal.y / normal.magnitude < cosMaxSlope) continue;
-
-            // 计算三角形的2D包围盒
-            float minX = Mathf.Min(v0.x, v1.x, v2.x);
-            float maxX = Mathf.Max(v0.x, v1.x, v2.x);
-            float minZ = Mathf.Min(v0.z, v1.z, v2.z);
-            float maxZ = Mathf.Max(v0.z, v1.z, v2.z);
-
-            int minGridX = Mathf.FloorToInt((minX - bounds.min.x) / voxelCellSize);
-            int maxGridX = Mathf.CeilToInt((maxX - bounds.min.x) / voxelCellSize);
-            int minGridZ = Mathf.FloorToInt((minZ - bounds.min.z) / voxelCellSize);
-            int maxGridZ = Mathf.CeilToInt((maxZ - bounds.min.z) / voxelCellSize);
-
-            // 遍历包围盒内的所有格子
-            for (int z = minGridZ; z < maxGridZ; z++)
-            {
-                for (int x = minGridX; x < maxGridX; x++)
-                {
-                    // 计算格子中心点的高度
-                    Vector3 cellCenter = new Vector3(bounds.min.x + x * voxelCellSize, bounds.center.y, bounds.min.z + z * voxelCellSize);
-                    if (IsPointInTriangle(cellCenter, v0, v1, v2, out float height))
-                    {
-                        int y = Mathf.FloorToInt((height - bounds.min.y) / voxelCellSize);
-                        int idx = z * gridWidth + x;
-                        if (!heightfield.TryGetValue(idx, out var span))
-                        {
-                            span = new HeightSpan { min = y, max = y };
-                            heightfield[idx] = span;
-                        }
-                        span.min = Mathf.Min(span.min, y);
-                        span.max = Mathf.Max(span.max, y);
-                    }
-                }
-            }
-        }
-        
-        // 3. 过滤高度图，标记可行走区域
-        int[] walkableGrid = new int[gridWidth * gridDepth];
-        foreach(var pair in heightfield)
-        {
-            int idx = pair.Key;
-            int x = idx % gridWidth;
-            int z = idx / gridWidth;
-            
-            int neighborMaxFloor = -1;
-            // 检查四个方向的邻居
-            for(int dir = 0; dir < 4; dir++)
-            {
-                int nx = x + (dir == 0 ? 1 : dir == 1 ? -1 : 0);
-                int nz = z + (dir == 2 ? 1 : dir == 3 ? -1 : 0);
-                int nIdx = nz * gridWidth + nx;
-
-                if (heightfield.TryGetValue(nIdx, out var neighborSpan))
-                {
-                    neighborMaxFloor = Mathf.Max(neighborMaxFloor, neighborSpan.max);
-                }
-            }
-            
-            // 如果与邻居的高度差在可攀爬范围内，则标记为可行走
-            if(neighborMaxFloor != -1 && Mathf.Abs(pair.Value.max - neighborMaxFloor) < agentWalkableClimb)
-            {
-                walkableGrid[idx] = pair.Value.max;
-            }
-        }
-
-        // 4. 连通性分析 - 找到最大的岛屿
-        int[] islandGrid = new int[gridWidth * gridDepth];
-        for (int i = 0; i < islandGrid.Length; i++) islandGrid[i] = -1;
-        
-        var islandSizes = new Dictionary<int, int>();
-        int currentIslandId = 0;
-        
-        for (int z = 0; z < gridDepth; z++)
-        {
-            for (int x = 0; x < gridWidth; x++)
-            {
-                int idx = z * gridWidth + x;
-                if (walkableGrid[idx] > 0 && islandGrid[idx] == -1)
-                {
-                    // 发现新的岛屿，进行广度优先搜索
-                    var queue = new Queue<int>();
-                    queue.Enqueue(idx);
-                    islandGrid[idx] = currentIslandId;
-                    int currentSize = 1;
-                    
-                    while (queue.Count > 0)
-                    {
-                        int currentIdx = queue.Dequeue();
-                        int cx = currentIdx % gridWidth;
-                        int cz = currentIdx / gridWidth;
-                        
-                        // 检查四个邻居
-                        for (int dir = 0; dir < 4; dir++)
-                        {
-                            int nx = cx + (dir == 0 ? 1 : dir == 1 ? -1 : 0);
-                            int nz = cz + (dir == 2 ? 1 : dir == 3 ? -1 : 0);
-                            int nIdx = nz * gridWidth + nx;
-                            
-                            if (nx >= 0 && nx < gridWidth && nz >= 0 && nz < gridDepth && 
-                                walkableGrid[nIdx] > 0 && islandGrid[nIdx] == -1)
-                            {
-                                islandGrid[nIdx] = currentIslandId;
-                                queue.Enqueue(nIdx);
-                                currentSize++;
-                            }
-                        }
-                    }
-                    
-                    islandSizes[currentIslandId] = currentSize;
-                    currentIslandId++;
-                }
-            }
-        }
-        
-        // 找到最大的岛屿ID
-        int largestIslandId = -1;
-        int largestSize = 0;
-        foreach (var pair in islandSizes)
-        {
-            if (pair.Value > largestSize)
-            {
-                largestSize = pair.Value;
-                largestIslandId = pair.Key;
-            }
-        }
-        
-        // 如果没有找到岛屿，返回空网格
-        if (largestIslandId == -1)
-        {
-            return null;
-        }
-        
-        // 创建只包含最大岛屿的网格
-        var newVertices = new List<Vector3>();
-        var newTriangles = new List<int>();
-        var vertexMap = new Dictionary<int, int>();
-
-        for (int z = 0; z < gridDepth - 1; z++)
-        {
-            for (int x = 0; x < gridWidth - 1; x++)
-            {
-                int idx00 = z * gridWidth + x;
-                int idx10 = z * gridWidth + x + 1;
-                int idx01 = (z + 1) * gridWidth + x;
-                int idx11 = (z + 1) * gridWidth + x + 1;
-
-                // 只处理属于最大岛屿的格子
-                if (islandGrid[idx00] == largestIslandId && islandGrid[idx10] == largestIslandId && 
-                    islandGrid[idx01] == largestIslandId && walkableGrid[idx00] > 0 && 
-                    walkableGrid[idx10] > 0 && walkableGrid[idx01] > 0)
-                {
-                    newTriangles.Add(GetVertex(idx00, walkableGrid[idx00], bounds.min));
-                    newTriangles.Add(GetVertex(idx01, walkableGrid[idx01], bounds.min));
-                    newTriangles.Add(GetVertex(idx10, walkableGrid[idx10], bounds.min));
-                }
-                if (islandGrid[idx11] == largestIslandId && islandGrid[idx01] == largestIslandId && 
-                    islandGrid[idx10] == largestIslandId && walkableGrid[idx11] > 0 && 
-                    walkableGrid[idx01] > 0 && walkableGrid[idx10] > 0)
-                {
-                    newTriangles.Add(GetVertex(idx10, walkableGrid[idx10], bounds.min));
-                    newTriangles.Add(GetVertex(idx01, walkableGrid[idx01], bounds.min));
-                    newTriangles.Add(GetVertex(idx11, walkableGrid[idx11], bounds.min));
-                }
-            }
-        }
-        
-        int GetVertex(int index, int height, Vector3 origin)
-        {
-            if (vertexMap.TryGetValue(index, out int vertIndex)) return vertIndex;
-
-            int x = index % gridWidth;
-            int z = index / gridWidth;
-            Vector3 pos = new Vector3(
-                origin.x + x * voxelCellSize,
-                origin.y + height * voxelCellSize,
-                origin.z + z * voxelCellSize
-            );
-            newVertices.Add(pos);
-            int newIndex = newVertices.Count - 1;
-            vertexMap[index] = newIndex;
-            return newIndex;
-        }
-
-        Mesh finalMesh = new Mesh {
-            name = "OptimizedWalkableMesh",
-            indexFormat = UnityEngine.Rendering.IndexFormat.UInt32,
-            vertices = newVertices.ToArray()
-        };
-        finalMesh.triangles = newTriangles.ToArray();
-        finalMesh.RecalculateNormals();
-        finalMesh.RecalculateBounds();
-        return finalMesh;
-    }
-    
-    // 辅助函数：判断点是否在三角形内（2D），并返回高度
-    bool IsPointInTriangle(Vector3 p, Vector3 a, Vector3 b, Vector3 c, out float height)
-    {
-        height = 0;
-        // 使用重心坐标法
-        Vector3 v0 = c - a;
-        Vector3 v1 = b - a;
-        Vector3 v2 = p - a;
-
-        float dot00 = Vector3.Dot(v0, v0);
-        float dot01 = Vector3.Dot(v0, v1);
-        float dot02 = Vector3.Dot(v0, v2);
-        float dot11 = Vector3.Dot(v1, v1);
-        float dot12 = Vector3.Dot(v1, v2);
-
-        float invDenom = 1 / (dot00 * dot11 - dot01 * dot01);
-        float u = (dot11 * dot02 - dot01 * dot12) * invDenom;
-        float v = (dot00 * dot12 - dot01 * dot02) * invDenom;
-        
-        if ((u >= 0) && (v >= 0) && (u + v < 1))
-        {
-            // 点在三角形内，通过重心坐标计算高度
-            height = a.y + u * (c.y - a.y) + v * (b.y - a.y);
-            return true;
-        }
-        return false;
-    }
-
-    #endregion
-
-    #region Mesh and FBX Utilities
-    // ... 此区域的辅助函数(GetMeshFromObject, CombineMeshes等)与之前版本基本相同 ...
-    // ... 为简洁起见，我只包含变化的部分和必须的部分 ...
-
-    private Mesh GetMeshFromObject(GameObject obj)
-    {
-        if (obj == null) return null;
-        Mesh mesh = null;
-        if (obj.GetComponent<MeshFilter>() != null && obj.GetComponent<MeshFilter>().sharedMesh != null)
-        {
-            mesh = obj.GetComponent<MeshFilter>().sharedMesh;
-        }
-        else if (obj.GetComponent<Terrain>() != null)
-        {
-            return ConvertTerrainToMesh(obj.GetComponent<Terrain>());
-        }
-        if (mesh == null || mesh.vertexCount == 0) return null;
-
+        if (mf == null || mf.sharedMesh == null) return null;
+        Mesh mesh = mf.sharedMesh;
+        if (mesh.vertexCount == 0) return null;
         Mesh worldMesh = Instantiate(mesh);
         Vector3[] vertices = worldMesh.vertices;
-        Matrix4x4 matrix = obj.transform.localToWorldMatrix;
-        for (int i = 0; i < vertices.Length; i++)
-        {
-            vertices[i] = matrix.MultiplyPoint3x4(vertices[i]);
-        }
+        Matrix4x4 matrix = mf.transform.localToWorldMatrix;
+        for (int i = 0; i < vertices.Length; i++) { vertices[i] = matrix.MultiplyPoint3x4(vertices[i]); }
         worldMesh.vertices = vertices;
         worldMesh.RecalculateNormals();
         worldMesh.RecalculateBounds();
         return worldMesh;
     }
 
-     private Mesh ConvertTerrainToMesh(Terrain terrain)
+    private Mesh ConvertTerrainToMesh(Terrain terrain)
     {
         TerrainData td = terrain.terrainData;
         int w = td.heightmapResolution;
@@ -466,10 +324,8 @@ public class AdvancedFBXExporter : EditorWindow
         Vector3 size = td.size;
         Vector3 pos = terrain.transform.position;
         float[,] heights = td.GetHeights(0, 0, w, h);
-
         var vertices = new Vector3[w * h];
         var triangles = new int[(w - 1) * (h - 1) * 6];
-
         for (int y = 0; y < h; y++)
         {
             for (int x = 0; x < w; x++)
@@ -477,23 +333,16 @@ public class AdvancedFBXExporter : EditorWindow
                 vertices[y * w + x] = pos + new Vector3(x * size.x / (w - 1), heights[y, x] * size.y, y * size.z / (h - 1));
             }
         }
-
         int index = 0;
         for (int y = 0; y < h - 1; y++)
         {
             for (int x = 0; x < w - 1; x++)
             {
-                int current = y * w + x;
-                int next = (y + 1) * w + x;
-                triangles[index++] = current;
-                triangles[index++] = next;
-                triangles[index++] = current + 1;
-                triangles[index++] = current + 1;
-                triangles[index++] = next;
-                triangles[index++] = next + 1;
+                int current = y * w + x; int next = (y + 1) * w + x;
+                triangles[index++] = current; triangles[index++] = next; triangles[index++] = current + 1;
+                triangles[index++] = current + 1; triangles[index++] = next; triangles[index++] = next + 1;
             }
         }
-
         Mesh mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32, vertices = vertices, triangles = triangles };
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
@@ -505,54 +354,44 @@ public class AdvancedFBXExporter : EditorWindow
         if (meshes == null || meshes.Count == 0) return null;
         meshes.RemoveAll(m => m == null || m.vertexCount == 0);
         if (meshes.Count == 0) return null;
-        if (meshes.Count == 1) return meshes[0];
-
         var combineInstances = meshes.Select(m => new CombineInstance { mesh = m, transform = Matrix4x4.identity }).ToArray();
         var combinedMesh = new Mesh { name = name, indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
         combinedMesh.CombineMeshes(combineInstances, true, false);
         combinedMesh.RecalculateBounds();
         return combinedMesh;
     }
-    
+
     private void ExportToFbx(Mesh originalMesh, Mesh navMesh)
     {
         FbxManager fbxManager = null;
         FbxExporter exporter = null;
-        bool exportSucceeded = false;
         try
         {
             fbxManager = FbxManager.Create();
-            var ios = FbxIOSettings.Create(fbxManager, Globals.IOSROOT);
-            fbxManager.SetIOSettings(ios);
-            string fileName = $"OptimizedScene_{System.DateTime.Now:yyyyMMdd_HHmmss}.fbx";
+            fbxManager.SetIOSettings(FbxIOSettings.Create(fbxManager, Globals.IOSROOT));
+            string fileName = $"SceneExport_{System.DateTime.Now:yyyyMMdd_HHmmss}.fbx";
             string fullPath = Path.Combine(exportPath, fileName);
             exporter = FbxExporter.Create(fbxManager, "");
             if (!exporter.Initialize(fullPath, -1, fbxManager.GetIOSettings())) throw new System.Exception("FBX Exporter initialization failed.");
-            
+
             var fbxScene = FbxScene.Create(fbxManager, "ExportedScene");
-            if (exportOriginalModel && originalMesh != null)
-            {
-                CreateFBXNodeFromMesh(fbxScene, originalMesh, "OriginalScene");
-            }
-            if(navMesh != null)
-            {
-                CreateFBXNodeFromMesh(fbxScene, navMesh, "GeneratedWalkableMesh");
-            }
+            if (exportOriginalModel && originalMesh != null) { CreateFBXNodeFromMesh(fbxScene, originalMesh, "OriginalScene"); }
+            if (navMesh != null) { CreateFBXNodeFromMesh(fbxScene, navMesh, "GeneratedNavMesh"); }
+
             exporter.Export(fbxScene);
-            exportSucceeded = true;
             EditorUtility.DisplayDialog("Success", $"FBX file exported successfully to:\n{fullPath}", "OK");
+            AssetDatabase.Refresh();
         }
         catch (System.Exception e)
         {
             Debug.LogError($"FBX Export Failed: {e.Message}\n{e.StackTrace}");
-            EditorUtility.DisplayDialog("Export Failed", $"An error occurred during export. Check the console.\n\nError: {e.Message}", "OK");
+            EditorUtility.DisplayDialog("Export Failed", $"An error occurred. Check console.\n\nError: {e.Message}", "OK");
         }
         finally
         {
             EditorUtility.ClearProgressBar();
             exporter?.Destroy();
             fbxManager?.Destroy();
-            if (exportSucceeded) AssetDatabase.Refresh();
         }
     }
 
@@ -565,10 +404,14 @@ public class AdvancedFBXExporter : EditorWindow
         int[] triangles = mesh.triangles;
         fbxMesh.InitControlPoints(vertices.Length);
         for (int i = 0; i < vertices.Length; i++) { fbxMesh.SetControlPointAt(new FbxVector4(vertices[i].x, vertices[i].y, vertices[i].z), i); }
+
+
         var normalLayer = FbxLayerElementNormal.Create(fbxMesh, "");
+
         normalLayer.SetMappingMode(FbxLayerElement.EMappingMode.eByControlPoint);
         normalLayer.SetReferenceMode(FbxLayerElement.EReferenceMode.eDirect);
         for (int i = 0; i < normals.Length; i++) { normalLayer.GetDirectArray().Add(new FbxVector4(normals[i].x, normals[i].y, normals[i].z)); }
+
         for (int i = 0; i < triangles.Length; i += 3)
         {
             fbxMesh.BeginPolygon();
@@ -580,6 +423,6 @@ public class AdvancedFBXExporter : EditorWindow
         fbxNode.SetNodeAttribute(fbxMesh);
         scene.GetRootNode().AddChild(fbxNode);
     }
-    
+
     #endregion
 }
